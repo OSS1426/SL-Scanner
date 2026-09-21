@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Merlog Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0b1220;color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:14px}
+  .topbar{width:100%;max-width:380px;display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .topbar h1{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#818cf8;margin:0}
+  .close-btn{width:34px;height:34px;border-radius:50%;border:none;background:#1f2937;color:#fff;font-size:16px;font-weight:700;cursor:pointer}
+  .stage{position:relative;width:100%;max-width:380px;border-radius:20px;overflow:hidden;background:#000;border:1px solid #333;aspect-ratio:1/1}
+  #reader{width:100%;height:100%;object-fit:cover}
+  .scan-overlay{position:absolute;inset:0;pointer-events:none;z-index:5}
+  .scan-frame{position:absolute;left:8%;right:8%;top:22%;bottom:22%;border:2px solid rgba(255,255,255,.35);border-radius:12px}
+  .scan-line{position:absolute;left:8%;right:8%;height:3px;top:22%;background:linear-gradient(90deg,transparent,#6366f1 15%,#818cf8 50%,#6366f1 85%,transparent);box-shadow:0 0 10px 3px rgba(99,102,241,.8);animation:scanMove 1.7s ease-in-out infinite}
+  @keyframes scanMove{0%{top:22%;opacity:0}8%{opacity:1}50%{top:76%;opacity:1}92%{opacity:1}100%{top:22%;opacity:0}}
+  .cam-controls{position:absolute;top:10px;right:10px;z-index:6;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+  .cam-btn{width:34px;height:34px;border-radius:50%;border:none;background:rgba(20,20,20,.7);color:#fff;font-size:14px;cursor:pointer}
+  .cam-btn.active{background:#f59e0b;color:#111}
+  .zoom-group{display:flex;flex-direction:column;background:rgba(20,20,20,.7);border-radius:17px;overflow:hidden}
+  .zoom-group .cam-btn{background:transparent;border-radius:0}
+  #liveVal{margin-top:10px;font-size:1.1rem;font-weight:800;letter-spacing:.5px;min-height:1.4em}
+  #liveVal.bad{color:#f87171}
+  #hint{font-size:12px;color:#9aa3af;text-align:center;max-width:340px;margin:6px 0}
+  #alertMsg{display:none;color:#fca5a5;font-size:12px;margin-top:4px}
+  .manual{width:100%;max-width:380px;margin-top:10px}
+  .manual input{width:100%;height:48px;padding:0 14px;border-radius:12px;border:1.5px solid #334155;background:#111827;color:#fff;font-size:1rem;text-align:center;font-weight:700}
+  .manual .primary{width:100%;height:48px;margin-top:8px;border:none;border-radius:12px;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
+</style>
+</head>
+<body>
+  <div class="topbar"><h1 id="titleText">סריקה</h1><button class="close-btn" onclick="closeWindow()">✕</button></div>
+  <div class="stage">
+    <div id="reader"></div>
+    <div class="scan-overlay"><div class="scan-frame"></div><div class="scan-line"></div></div>
+    <div class="cam-controls" id="camControls" style="display:none;">
+      <button class="cam-btn" id="torchBtn" onclick="toggleTorch()" title="פנס">🔦</button>
+      <div class="zoom-group"><button class="cam-btn" onclick="adjustZoom(1)">+</button><button class="cam-btn" onclick="adjustZoom(-1)">−</button></div>
+    </div>
+  </div>
+  <div id="liveVal"></div>
+  <p id="hint">יישר את הברקוד בתוך המסגרת</p>
+  <p id="alertMsg"></p>
+  <div class="manual">
+    <input type="text" id="manualInput" placeholder="או הקלד ידנית" onkeypress="if(event.key==='Enter') submitManual()">
+    <button class="primary" onclick="submitManual()">השתמש בערך</button>
+  </div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const targetId = params.get('target') || 'sku';        // 'sku' (item barcode) or 'loc' (location)
+  const mode = params.get('mode') === 'loc' ? 'loc' : 'barcode';
+  document.getElementById('titleText').innerText = mode === 'loc' ? 'סריקת מיקום' : 'סריקת ברקוד';
+  document.getElementById('hint').innerText = mode === 'loc' ? 'יישר את ברקוד המיקום במסגרת' : 'יישר את ברקוד הפריט במסגרת';
+
+  let closed=false, scanner=null, torchOn=false, currentZoom=1, zoomCaps=null;
+
+  function sendResult(value){
+    if(closed) return; closed=true;
+    if(window.opener) window.opener.postMessage({ source:'vs-scanner', target:targetId, value:value }, '*');
+    teardown(); setTimeout(()=>window.close(), 350);
+  }
+  function submitManual(){ const v=document.getElementById('manualInput').value.trim(); if(v) sendResult(v); }
+  function teardown(){ if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); } }
+  function closeWindow(){ closed=true; teardown(); window.close(); }
+
+  function tone(freq,dur,type){ try{ const c=new (window.AudioContext||window.webkitAudioContext)(); const o=c.createOscillator(),g=c.createGain(); o.connect(g); g.connect(c.destination); o.type=type||'sine'; o.frequency.value=freq; g.gain.setValueAtTime(.3,c.currentTime); g.gain.exponentialRampToValueAtTime(.001,c.currentTime+dur); o.start(); o.stop(c.currentTime+dur);}catch(e){} }
+  const ok=()=>tone(1200,.15,'sine'), bad=()=>tone(220,.3,'sawtooth');
+
+  function setupControls(){
+    if(!scanner || typeof scanner.getRunningTrackCapabilities!=='function') return;
+    try{
+      const caps=scanner.getRunningTrackCapabilities();
+      document.getElementById('camControls').style.display='flex';
+      document.getElementById('torchBtn').style.display=(caps&&caps.torch)?'flex':'none';
+      if(caps&&caps.zoom){ zoomCaps=caps.zoom; currentZoom=caps.zoom.min!==undefined?caps.zoom.min:1; } else document.querySelector('.zoom-group').style.display='none';
+      if(caps&&caps.focusMode&&caps.focusMode.indexOf('continuous')!==-1) scanner.applyVideoConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+    }catch(e){}
+  }
+  async function toggleTorch(){ if(!scanner) return; try{ torchOn=!torchOn; await scanner.applyVideoConstraints({advanced:[{torch:torchOn}]}); document.getElementById('torchBtn').classList.toggle('active',torchOn);}catch(e){ torchOn=!torchOn; } }
+  async function adjustZoom(d){ if(!scanner||!zoomCaps) return; try{ const step=zoomCaps.step||.5,min=zoomCaps.min!==undefined?zoomCaps.min:1,max=zoomCaps.max!==undefined?zoomCaps.max:3; currentZoom=Math.max(min,Math.min(max,currentZoom+d*step)); await scanner.applyVideoConstraints({advanced:[{zoom:currentZoom}]});}catch(e){} }
+
+  // 13-digit EAN wrapping a 12-digit UPC -> strip the leading 0
+  function normUpc(raw){ const v=(raw||'').trim(); return /^0\d{12}$/.test(v) ? v.substring(1) : v; }
+  // a location looks like F3L130105 (F + digit + R/L + digits)
+  function isLoc(v){ return /^F\d[RL]\d{5,7}$/i.test(String(v||'').trim().toUpperCase().replace(/[\s-]/g,'')); }
+
+  function onDetected(text){
+    const live=document.getElementById('liveVal'), alertMsg=document.getElementById('alertMsg');
+    if(mode==='loc'){
+      const v=String(text||'').trim().toUpperCase().replace(/[\s-]/g,'');
+      live.innerText=v; const good=isLoc(v);
+      live.classList.toggle('bad',!good);
+      if(good){ alertMsg.style.display='none'; ok(); sendResult(v); }
+      else { alertMsg.textContent='לא נראה כמו מיקום (F3L…) — המשך לסרוק'; alertMsg.style.display='block'; bad(); }
+      return;
+    }
+    const n=normUpc(text); const validUpc=/^\d{12}$/.test(n);
+    live.innerText=text; live.classList.toggle('bad',!validUpc);
+    if(validUpc){ alertMsg.style.display='none'; ok(); sendResult(n); }
+    else { const d=String(text).replace(/\D/g,''); alertMsg.textContent = d.length<12 ? ('קצר מדי ('+d.length+'/12) — המשך לסרוק') : ('ארוך מדי ('+d.length+'/12)'); alertMsg.style.display='block'; bad(); }
+  }
+
+  function start(){
+    try{
+      scanner=new Html5Qrcode("reader");
+      scanner.start({facingMode:"environment"}, {fps:10, qrbox:{width:260,height:150}}, onDetected, ()=>{})
+        .then(setupControls)
+        .catch(()=>{ document.getElementById('hint').innerText='המצלמה אינה זמינה — הקלד את הערך למטה'; });
+    }catch(e){ document.getElementById('hint').innerText='המצלמה אינה זמינה — הקלד את הערך למטה'; }
+  }
+  start();
+  window.addEventListener('beforeunload', teardown);
+</script>
+</body>
+</html>
