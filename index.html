@@ -85,16 +85,17 @@
   // 13-digit EAN wrapping a 12-digit UPC -> strip the leading 0
   function normUpc(raw){ const v=(raw||'').trim(); return /^0\d{12}$/.test(v) ? v.substring(1) : v; }
   // a location looks like F3L130105 (F + digit + R/L + digits)
-  function isLoc(v){ return /^F\d[RL]\d{5,7}$/i.test(String(v||'').trim().toUpperCase().replace(/[\s-]/g,'')); }
+  // any location code: letters+digits, dashes allowed (F3L110165, MIXF5-BRA). All-digit codes are item barcodes.
+  function isLoc(v){ return /^(?=.*[A-Z])[A-Z0-9][A-Z0-9\-_.]{2,23}$/.test(String(v||'').trim().toUpperCase().replace(/\s/g,'')); }
 
   function onDetected(text){
     const live=document.getElementById('liveVal'), alertMsg=document.getElementById('alertMsg');
     if(mode==='loc'){
-      const v=String(text||'').trim().toUpperCase().replace(/[\s-]/g,'');
+      const v=String(text||'').trim().toUpperCase().replace(/\s/g,'');   // keep "-" (MIXF5-BRA)
       live.innerText=v; const good=isLoc(v);
       live.classList.toggle('bad',!good);
       if(good){ alertMsg.style.display='none'; ok(); sendResult(v); }
-      else { alertMsg.textContent='לא נראה כמו מיקום (F3L…) — המשך לסרוק'; alertMsg.style.display='block'; bad(); }
+      else { alertMsg.textContent='לא נראה כמו קוד מיקום — המשך לסרוק'; alertMsg.style.display='block'; bad(); }
       return;
     }
     const n=normUpc(text); const validUpc=/^\d{12}$/.test(n);
