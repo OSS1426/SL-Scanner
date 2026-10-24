@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Merlog Scanner</title>
+<meta name="merlog-scanner" content="2"><!-- modes: barcode · loc · code (Merlog checks this marker) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <style>
   *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0b1220;color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:14px}
@@ -51,9 +52,10 @@
 <script>
   const params = new URLSearchParams(location.search);
   const targetId = params.get('target') || 'sku';        // 'sku' (item barcode) or 'loc' (location)
-  const mode = params.get('mode') === 'loc' ? 'loc' : 'barcode';
-  document.getElementById('titleText').innerText = mode === 'loc' ? 'סריקת מיקום' : 'סריקת ברקוד';
-  document.getElementById('hint').innerText = mode === 'loc' ? 'יישר את ברקוד המיקום במסגרת' : 'יישר את ברקוד הפריט במסגרת';
+  // 'barcode' = 12-digit item UPC (Merlog bras) · 'loc' = a location · 'code' = any code as printed (cartons, 13-digit EAN of FIX items)
+  const mode = ['loc', 'code'].indexOf(params.get('mode')) >= 0 ? params.get('mode') : 'barcode';
+  document.getElementById('titleText').innerText = mode === 'loc' ? 'סריקת מיקום' : (mode === 'code' ? 'סריקת קוד' : 'סריקת ברקוד');
+  document.getElementById('hint').innerText = mode === 'loc' ? 'יישר את ברקוד המיקום במסגרת' : (mode === 'code' ? 'יישר את הברקוד (קרטון / פריט) במסגרת' : 'יישר את ברקוד הפריט במסגרת');
 
   let closed=false, scanner=null, torchOn=false, currentZoom=1, zoomCaps=null;
 
@@ -96,6 +98,13 @@
       live.classList.toggle('bad',!good);
       if(good){ alertMsg.style.display='none'; ok(); sendResult(v); }
       else { alertMsg.textContent='לא נראה כמו קוד מיקום — המשך לסרוק'; alertMsg.style.display='block'; bad(); }
+      return;
+    }
+    if(mode==='code'){                                                   // any code exactly as printed (a carton number keeps its leading zeros)
+      const v=String(text||'').trim().toUpperCase().replace(/\s/g,''), good=/^[A-Z0-9\]\-_.]{4,40}$/.test(v);
+      live.innerText=v; live.classList.toggle('bad',!good);
+      if(good){ alertMsg.style.display='none'; ok(); sendResult(v); }
+      else { alertMsg.textContent='קוד לא תקין — המשך לסרוק'; alertMsg.style.display='block'; bad(); }
       return;
     }
     const n=normUpc(text); const validUpc=/^\d{12}$/.test(n);
